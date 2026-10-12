@@ -1,0 +1,15 @@
+{
+  "name": "mradik",
+  "description": "MRADiK by Madefast.",
+  "owner": {
+    "name": "Madefast"
+  },
+  "plugins": [
+    {
+      "name": "mradik",
+      "source": "./",
+      "description": "Lets Claude Code ask other local repositories questions through a read-only agent running in each of them.",
+      "version": "0.1.0"
+    }
+  ]
+}
