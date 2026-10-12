@@ -9,13 +9,15 @@ Use it when work in one repository depends on another: types and schemas, events
 Requirements: Claude Code, and Node.js 20 or newer on `PATH`.
 
 ```bash
-claude plugin marketplace add madefast-ai/mradik-plugin
-claude plugin install mradik@mradik
+claude plugin marketplace add madefast-ai/claude-plugins
+claude plugin install mradik@madefast
 ```
+
+In Claude Desktop: **Customize → Plugins → Add marketplace → Add from a repository**, enter `madefast-ai/claude-plugins`, then install **mradik**.
 
 Then restart Claude Code. The server runs from the bundled `dist/mradik.js`; nothing to build or install.
 
-Updating: `claude plugin marketplace update mradik`, then `claude plugin update mradik@mradik`, then restart.
+Updating: `claude plugin marketplace update madefast`, then `claude plugin update mradik@madefast`, then restart.
 
 ### Finding the claude CLI
 
