@@ -16976,7 +16976,8 @@ function writeJson(path, data) {
 }
 
 // src/registry.ts
-var REGISTRY_VERSION = "1.0.0";
+var REGISTRY_VERSION = "1.1.0";
+var DEFAULT_NAMESPACE = "default";
 function realPathOrSelf(path) {
   try {
     return realpathSync(path);
@@ -16995,10 +16996,23 @@ var ProjectRegistryManager = class {
    * Load registry from disk or create empty one
    */
   loadRegistry() {
-    return readJson(REGISTRY_PATH) ?? {
+    const loaded = readJson(REGISTRY_PATH) ?? {};
+    const registry3 = {
       version: REGISTRY_VERSION,
-      projects: {}
+      namespaces: loaded.namespaces ?? {},
+      projects: loaded.projects ?? {}
     };
+    registry3.namespaces[DEFAULT_NAMESPACE] ??= {
+      name: DEFAULT_NAMESPACE,
+      description: "Projects not in any other namespace",
+      createdAt: (/* @__PURE__ */ new Date()).toISOString()
+    };
+    for (const project of Object.values(registry3.projects)) {
+      if (!project.namespace || !registry3.namespaces[project.namespace]) {
+        project.namespace = DEFAULT_NAMESPACE;
+      }
+    }
+    return registry3;
   }
   /**
    * Save registry to disk
@@ -17056,13 +17070,17 @@ var ProjectRegistryManager = class {
     return best;
   }
   /**
-   * List all projects
+   * List all projects, optionally filtered by status and namespace
    */
-  listAll(statusFilter) {
+  listAll(statusFilter, namespaceFilter) {
     this.reloadFromDisk();
-    const projects = Object.values(this.registry.projects);
+    let projects = Object.values(this.registry.projects);
     if (statusFilter) {
-      return projects.filter((p) => p.status === statusFilter);
+      projects = projects.filter((p) => p.status === statusFilter);
+    }
+    if (namespaceFilter) {
+      const namespace = this.requireNamespace(namespaceFilter);
+      projects = projects.filter((p) => p.namespace === namespace.name);
     }
     return projects;
   }
@@ -17071,6 +17089,7 @@ var ProjectRegistryManager = class {
    */
   addProject(config2) {
     this.reloadFromDisk();
+    const namespace = this.requireNamespace(config2.namespace ?? DEFAULT_NAMESPACE);
     if (this.aliasMap.has(config2.name.toLowerCase())) {
       throw new Error(`Project or alias "${config2.name}" already exists`);
     }
@@ -17084,6 +17103,7 @@ var ProjectRegistryManager = class {
     }
     const project = {
       ...config2,
+      namespace: namespace.name,
       status: "ready",
       registeredAt: (/* @__PURE__ */ new Date()).toISOString()
     };
@@ -17104,6 +17124,112 @@ var ProjectRegistryManager = class {
     this.buildAliasMap();
     this.saveRegistry();
     return true;
+  }
+  /**
+   * Move a project to another namespace
+   */
+  moveProject(name, namespaceName) {
+    const project = this.resolve(name);
+    if (!project) {
+      throw new Error(`Project "${name}" not found`);
+    }
+    project.namespace = this.requireNamespace(namespaceName).name;
+    this.saveRegistry();
+    return project;
+  }
+  // ==========================================================================
+  // Namespaces
+  // ==========================================================================
+  /**
+   * Find a namespace by name (case-insensitive)
+   */
+  findNamespace(name) {
+    const lower = name.toLowerCase();
+    return Object.values(this.registry.namespaces).find((n) => n.name.toLowerCase() === lower);
+  }
+  requireNamespace(name) {
+    const namespace = this.findNamespace(name);
+    if (!namespace) {
+      const names = Object.keys(this.registry.namespaces).join(", ");
+      throw new Error(`Namespace "${name}" not found. Existing namespaces: ${names}. Use create_namespace to add one.`);
+    }
+    return namespace;
+  }
+  /**
+   * List all namespaces, each with the names of its projects
+   */
+  listNamespaces() {
+    this.reloadFromDisk();
+    const projects = Object.values(this.registry.projects);
+    return Object.values(this.registry.namespaces).map((namespace) => ({
+      ...namespace,
+      projects: projects.filter((p) => p.namespace === namespace.name).map((p) => p.name)
+    }));
+  }
+  createNamespace(name, description = "") {
+    this.reloadFromDisk();
+    if (!name.trim()) {
+      throw new Error("Namespace name cannot be empty");
+    }
+    if (this.findNamespace(name)) {
+      throw new Error(`Namespace "${name}" already exists`);
+    }
+    const namespace = { name, description, createdAt: (/* @__PURE__ */ new Date()).toISOString() };
+    this.registry.namespaces[name] = namespace;
+    this.saveRegistry();
+    return namespace;
+  }
+  /**
+   * Rename a namespace and/or change its description; its projects follow a rename
+   */
+  updateNamespace(name, changes) {
+    this.reloadFromDisk();
+    const namespace = this.requireNamespace(name);
+    if (changes.newName !== void 0 && changes.newName !== namespace.name) {
+      if (namespace.name === DEFAULT_NAMESPACE) {
+        throw new Error(`The "${DEFAULT_NAMESPACE}" namespace cannot be renamed`);
+      }
+      if (!changes.newName.trim()) {
+        throw new Error("Namespace name cannot be empty");
+      }
+      const existing = this.findNamespace(changes.newName);
+      if (existing && existing !== namespace) {
+        throw new Error(`Namespace "${changes.newName}" already exists`);
+      }
+      delete this.registry.namespaces[namespace.name];
+      for (const project of Object.values(this.registry.projects)) {
+        if (project.namespace === namespace.name) {
+          project.namespace = changes.newName;
+        }
+      }
+      namespace.name = changes.newName;
+      this.registry.namespaces[namespace.name] = namespace;
+    }
+    if (changes.description !== void 0) {
+      namespace.description = changes.description;
+    }
+    this.saveRegistry();
+    return namespace;
+  }
+  /**
+   * Delete a namespace; its projects move to "default". Returns the moved project names.
+   */
+  deleteNamespace(name) {
+    this.reloadFromDisk();
+    const namespace = this.requireNamespace(name);
+    if (namespace.name === DEFAULT_NAMESPACE) {
+      throw new Error(`The "${DEFAULT_NAMESPACE}" namespace cannot be deleted`);
+    }
+    const moved = [];
+    for (const project of Object.values(this.registry.projects)) {
+      if (project.namespace === namespace.name) {
+        project.namespace = DEFAULT_NAMESPACE;
+        moved.push(project.name);
+      }
+    }
+    delete this.registry.namespaces[namespace.name];
+    this.saveRegistry();
+    return moved;
   }
   /**
    * Update a project's last query timestamp
@@ -17558,7 +17684,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
     // -------------------------------------------------------------------------
     {
       name: "list_projects",
-      description: "List all projects registered in MRADiK. Returns project names, descriptions, domains, and status.",
+      description: "List all projects registered in MRADiK. Returns project names, namespaces, descriptions, domains, and status.",
       inputSchema: {
         type: "object",
         properties: {
@@ -17566,6 +17692,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: "string",
             enum: ["ready", "disabled"],
             description: "Optional filter by project status"
+          },
+          namespace: {
+            type: "string",
+            description: "Optional filter by namespace"
           }
         }
       }
@@ -17597,6 +17727,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
             type: "array",
             items: { type: "string" },
             description: 'Short aliases for the project (e.g., "api" for "public-api")'
+          },
+          namespace: {
+            type: "string",
+            description: `Namespace to put the project in (default: "${DEFAULT_NAMESPACE}"). It must exist; see list_namespaces.`
           }
         },
         required: ["name", "path", "description"]
@@ -17617,6 +17751,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
       }
     },
     {
+      name: "move_project",
+      description: "Move a project to another namespace.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Project name or alias"
+          },
+          namespace: {
+            type: "string",
+            description: "Namespace to move it to"
+          }
+        },
+        required: ["name", "namespace"]
+      }
+    },
+    {
       name: "get_project_info",
       description: `Get detailed information about a project, by name or by path.
 
@@ -17633,6 +17785,71 @@ To check whether the project you are working in is registered (and under which n
             description: "Absolute path of the project root or any folder inside it (use instead of name)"
           }
         }
+      }
+    },
+    // -------------------------------------------------------------------------
+    // Namespace Tools
+    // -------------------------------------------------------------------------
+    {
+      name: "list_namespaces",
+      description: `List the namespaces (groups of projects) and the projects in each. The "${DEFAULT_NAMESPACE}" namespace always exists and holds projects added without a namespace.`,
+      inputSchema: {
+        type: "object",
+        properties: {}
+      }
+    },
+    {
+      name: "create_namespace",
+      description: "Create a namespace: a group of projects, e.g. the repositories of one product.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Unique namespace name"
+          },
+          description: {
+            type: "string",
+            description: "Optional description"
+          }
+        },
+        required: ["name"]
+      }
+    },
+    {
+      name: "update_namespace",
+      description: `Rename a namespace and/or change its description. Its projects stay in it. The "${DEFAULT_NAMESPACE}" namespace cannot be renamed.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Current namespace name"
+          },
+          new_name: {
+            type: "string",
+            description: "New name"
+          },
+          description: {
+            type: "string",
+            description: "New description"
+          }
+        },
+        required: ["name"]
+      }
+    },
+    {
+      name: "delete_namespace",
+      description: `Delete a namespace. Its projects move to the "${DEFAULT_NAMESPACE}" namespace; nothing is unregistered. The "${DEFAULT_NAMESPACE}" namespace cannot be deleted.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          name: {
+            type: "string",
+            description: "Namespace name"
+          }
+        },
+        required: ["name"]
       }
     },
     // -------------------------------------------------------------------------
@@ -17723,19 +17940,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       // -----------------------------------------------------------------------
       case "list_projects": {
         const input = args ?? {};
-        const projects = registry2.listAll(input.status);
+        const projects = registry2.listAll(input.status, input.namespace);
         if (projects.length === 0) {
           return {
             content: [
               {
                 type: "text",
-                text: "No projects registered. Use add_project to register one."
+                text: input.namespace || input.status ? "No projects match." : "No projects registered. Use add_project to register one."
               }
             ]
           };
         }
         const formatted = projects.map(
           (p) => `**${p.name}** (${p.status})
+  Namespace: ${p.namespace}
   Path: ${p.path}
   Description: ${p.description}
   Domains: ${p.domains.join(", ") || "none"}
@@ -17755,7 +17973,8 @@ ${formatted}` }]
           path: input.path,
           description: input.description,
           domains: input.domains ?? [],
-          aliases: input.aliases ?? []
+          aliases: input.aliases ?? [],
+          namespace: input.namespace
         });
         return {
           content: [
@@ -17763,6 +17982,7 @@ ${formatted}` }]
               type: "text",
               text: `Successfully registered project "${project.name}"
 
+Namespace: ${project.namespace}
 Path: ${project.path}
 Status: ${project.status}`
             }
@@ -17779,6 +17999,13 @@ Status: ${project.status}`
               text: removed ? `Project "${input.name}" removed from registry` : `Project "${input.name}" not found`
             }
           ]
+        };
+      }
+      case "move_project": {
+        const input = args;
+        const project = registry2.moveProject(input.name, input.namespace);
+        return {
+          content: [{ type: "text", text: `Project "${project.name}" is now in namespace "${project.namespace}"` }]
         };
       }
       case "get_project_info": {
@@ -17798,12 +18025,57 @@ Status: ${project.status}`
               text: `## ${project.name}
 
 **Status:** ${project.status}
+**Namespace:** ${project.namespace}
 **Path:** ${project.path}
 **Description:** ${project.description}
 **Domains:** ${project.domains.join(", ") || "none"}
 **Aliases:** ${project.aliases.join(", ") || "none"}
 **Registered:** ${project.registeredAt}
 **Last Query:** ${project.lastQueryAt ?? "never"}`
+            }
+          ]
+        };
+      }
+      // -----------------------------------------------------------------------
+      // Namespaces
+      // -----------------------------------------------------------------------
+      case "list_namespaces": {
+        const formatted = registry2.listNamespaces().map(
+          (n) => `**${n.name}** (${n.projects.length} project${n.projects.length === 1 ? "" : "s"})${n.description ? `
+  Description: ${n.description}` : ""}
+  Projects: ${n.projects.join(", ") || "none"}`
+        ).join("\n\n");
+        return {
+          content: [{ type: "text", text: `## Namespaces
+
+${formatted}` }]
+        };
+      }
+      case "create_namespace": {
+        const input = args;
+        const namespace = registry2.createNamespace(input.name, input.description);
+        return {
+          content: [{ type: "text", text: `Namespace "${namespace.name}" created` }]
+        };
+      }
+      case "update_namespace": {
+        const input = args;
+        const namespace = registry2.updateNamespace(input.name, {
+          newName: input.new_name,
+          description: input.description
+        });
+        return {
+          content: [{ type: "text", text: `Namespace "${namespace.name}" updated` }]
+        };
+      }
+      case "delete_namespace": {
+        const input = args;
+        const moved = registry2.deleteNamespace(input.name);
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Namespace "${input.name}" deleted.${moved.length ? ` Moved to "${DEFAULT_NAMESPACE}": ${moved.join(", ")}` : ""}`
             }
           ]
         };

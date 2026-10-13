@@ -29,7 +29,7 @@ Each query spawns `claude`. MRADiK uses `claude` from `PATH`; if Claude Code was
 
 ```
 ~/.mradik/
-├── projects.json            registered projects
+├── projects.json            namespaces and registered projects
 └── cache/
     ├── queries.json         answer cache (10-minute TTL)
     └── conversations.json   conversation history (10-minute sliding window)
@@ -39,7 +39,19 @@ Each query spawns `claude`. MRADiK uses `claude` from `PATH`; if Claude Code was
 
 ```json
 {
-  "version": "1.0.0",
+  "version": "1.1.0",
+  "namespaces": {
+    "default": {
+      "name": "default",
+      "description": "Projects not in any other namespace",
+      "createdAt": "2026-10-12T14:00:00.000Z"
+    },
+    "shop": {
+      "name": "shop",
+      "description": "Storefront and its services",
+      "createdAt": "2026-10-12T14:04:00.000Z"
+    }
+  },
   "projects": {
     "billing-service": {
       "name": "billing-service",
@@ -47,6 +59,7 @@ Each query spawns `claude`. MRADiK uses `claude` from `PATH`; if Claude Code was
       "description": "Invoicing, payments and subscription billing",
       "domains": ["billing", "invoices", "payments"],
       "aliases": ["billing"],
+      "namespace": "shop",
       "status": "ready",
       "registeredAt": "2026-10-12T14:05:12.481Z"
     }
@@ -56,16 +69,30 @@ Each query spawns `claude`. MRADiK uses `claude` from `PATH`; if Claude Code was
 
 Set `status` to `"disabled"` to stop routing questions to a project without removing it.
 
+## Namespaces
+
+A namespace groups projects, for example the repositories of one product. Every project is in exactly one namespace. A project added without one goes to `default`, which always exists and can't be renamed or deleted. Deleting a namespace moves its projects to `default`; nothing is unregistered. Namespaces only group and filter: `ask_project` can reach any registered project.
+
 ## Tools
 
 ### Project registry
 
 | Tool | Description |
 |------|-------------|
-| `list_projects` | List registered projects, optionally filtered by status |
-| `add_project` | Register a local repository: `name`, absolute `path`, `description`, optional `domains` and `aliases` |
+| `list_projects` | List registered projects, optionally filtered by `status` and `namespace` |
+| `add_project` | Register a local repository: `name`, absolute `path`, `description`, optional `domains`, `aliases` and `namespace` (default `default`; it must exist) |
 | `remove_project` | Unregister a project (no files are touched) |
+| `move_project` | Move a project to another namespace |
 | `get_project_info` | Details of one project, by `name` (or alias) or by `path`. Pass your working directory as `path` to check whether the current project is registered, and under which name |
+
+### Namespaces
+
+| Tool | Description |
+|------|-------------|
+| `list_namespaces` | List namespaces and the projects in each |
+| `create_namespace` | Create a namespace: `name`, optional `description` |
+| `update_namespace` | Rename a namespace (`new_name`) and/or change its `description` |
+| `delete_namespace` | Delete a namespace; its projects move to `default` |
 
 ### Cross-project queries
 
