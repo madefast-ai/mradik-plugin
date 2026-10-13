@@ -1,7 +1,7 @@
 {
   "name": "mradik",
   "displayName": "MRADiK",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "Multi Repo Agentic Development (intelligent) Kit: lets Claude Code ask other local repositories questions through a read-only agent running in each of them.",
   "author": {
     "name": "Madefast"
